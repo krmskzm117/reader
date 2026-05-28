@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reader.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root {
+    --bg: #ffffff;
+    --ink: #111111;
+    --ink-mid: #6b6b6b;
+    --ink-faint: #cfcfcf;
+    --paper: #ffffff;
+    --paper-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.06);
+    --rule: #111111;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button { font-family: inherit; }
+
+  /* ─── Intro ──────────────────────── */
+  #intro {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 24px clamp(20px, 4vw, 48px);
+    transition: opacity 0.4s ease, visibility 0.4s;
+    z-index: 10;
+  }
+  #intro.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+
+  .bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .bar.bottom {
+    color: var(--ink-mid);
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  .intro-main {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 40px 0;
+    max-width: 1200px;
+    width: 100%;
+  }
+
+  .intro-title {
+    font-size: clamp(64px, 13vw, 200px);
+    line-height: 0.95;
+    letter-spacing: -0.045em;
+    font-weight: 500;
+    margin-bottom: clamp(32px, 5vw, 56px);
+  }
+  .intro-title .dot { color: var(--ink); }
+
+  .intro-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: clamp(24px, 5vw, 80px);
+    align-items: end;
+    max-width: 900px;
+  }
+
+  .intro-desc {
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--ink-mid);
+    max-width: 420px;
+  }
+
+  .drop-zone {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--rule);
+    padding: 20px 0 0;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+    color: var(--ink);
+  }
+  .drop-zone:hover { opacity: 0.55; }
+  .drop-zone.dragging { opacity: 0.55; }
+  .drop-zone .label {
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+  .drop-zone .arrow {
+    font-size: 22px;
+    font-weight: 400;
+    transition: transform 0.3s ease;
+  }
+  .drop-zone:hover .arrow { transform: translateX(6px); }
+  #file-input { display: none; }
+
+  /* ─── Viewer ──────────────────────── */
+  #viewer {
+    position: fixed;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    background: var(--bg);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+  #viewer.visible { display: flex; opacity: 1; }
+
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 18px clamp(20px, 4vw, 40px);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+    z-index: 20;
+    flex-shrink: 0;
+  }
+  .topbar .title { letter-spacing: -0.01em; }
+  .topbar .counter {
+    color: var(--ink-mid);
+    font-variant-numeric: tabular-nums;
+    font-weight: 400;
+  }
+  .topbar .counter .cur { color: var(--ink); font-weight: 500; }
+  .topbar .close-btn {
+    background: none;
+    border: none;
+    color: var(--ink);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 0;
+    transition: opacity 0.2s ease;
+  }
+  .topbar .close-btn:hover { opacity: 0.5; }
+
+  .book-stage {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px clamp(60px, 8vw, 100px) clamp(80px, 10vh, 120px);
+    min-height: 0;
+    position: relative;
+  }
+
+  .spread {
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    gap: 0;
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  .page {
+    background: var(--paper);
+    position: relative;
+    overflow: hidden;
+    box-shadow: var(--paper-shadow);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .page.hidden { visibility: hidden; box-shadow: none; }
+  .page canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* gutter shading */
+  .page.left::after,
+  .page.right::after {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 14px;
+    pointer-events: none;
+  }
+  .page.left::after {
+    right: 0;
+    background: linear-gradient(to left, rgba(0,0,0,0.06), transparent);
+  }
+  .page.right::after {
+    left: 0;
+    background: linear-gradient(to right, rgba(0,0,0,0.06), transparent);
+  }
+
+  /* nav */
+  .nav {
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--bg);
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    width: 44px;
+    height: 44px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: inherit;
+    font-size: 18px;
+    font-weight: 400;
+    transition: background 0.2s ease, color 0.2s ease;
+    z-index: 15;
+    border-radius: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .nav:hover:not(:disabled),
+  .nav:active:not(:disabled) {
+    background: var(--ink);
+    color: var(--bg);
+  }
+  .nav:disabled {
+    opacity: 0.25;
+    cursor: default;
+    border-color: var(--ink-faint);
+    color: var(--ink-faint);
+  }
+  .nav.prev { left: clamp(12px, 2vw, 24px); }
+  .nav.next { right: clamp(12px, 2vw, 24px); }
+
+  /* footer with hint */
+  .footer-hint {
+    position: fixed;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--ink-mid);
+    letter-spacing: 0.02em;
+    z-index: 15;
+  }
+
+  /* loading */
+  .loading {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    background: var(--bg);
+    z-index: 50;
+  }
+  .loading.active { display: flex; }
+  .loading-text {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .loading-bar {
+    width: 160px;
+    height: 1px;
+    background: var(--ink-faint);
+    overflow: hidden;
+  }
+  .loading-bar::after {
+    content: '';
+    display: block;
+    width: 40%;
+    height: 100%;
+    background: var(--ink);
+    animation: slide 1.2s infinite ease-in-out;
+  }
+  @keyframes slide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+
+  /* Responsive */
+  @media (max-width: 720px) {
+    .intro-row { grid-template-columns: 1fr; gap: 32px; }
+    .nav { width: 38px; height: 38px; font-size: 16px; }
+    .topbar { padding: 14px 18px; font-size: 12px; }
+    .book-stage { padding: 12px 56px clamp(70px, 9vh, 100px); }
+  }
+</style>
+</head>
+<body>
+
+<!-- Intro -->
+<div id="intro">
+  <header class="bar">
+    <span>Reader<span class="dot">.</span></span>
+    <span>2026</span>
+  </header>
+
+  <div class="intro-main">
+    <h1 class="intro-title">Reader<span class="dot">.</span></h1>
+    <div class="intro-row">
+      <p class="intro-desc">Conceived for the viewing of photographs by krmskzm. Pages unfold as spreads, advanced by arrow keys, on-screen controls, or touch.</p>
+      <label class="drop-zone" id="drop-zone" for="file-input">
+        <span class="label">Open a PDF</span>
+        <span class="arrow">→</span>
+      </label>
+      <input type="file" id="file-input" accept="application/pdf">
+    </div>
+  </div>
+
+  <footer class="bar bottom">
+    <span>Drop a file anywhere on this page</span>
+    <span>PDF · A4 · Landscape</span>
+  </footer>
+</div>
+
+<!-- Loading -->
+<div class="loading" id="loading">
+  <div class="loading-text">Opening</div>
+  <div class="loading-bar"></div>
+</div>
+
+<!-- Viewer -->
+<div id="viewer">
+  <div class="topbar">
+    <span class="title">Reader<span class="dot">.</span></span>
+    <span class="counter"><span class="cur" id="cur-page">—</span> / <span id="tot-page">—</span></span>
+    <button class="close-btn" id="close-btn">Close</button>
+  </div>
+
+  <div class="book-stage">
+    <div class="spread" id="spread">
+      <div class="page left" id="page-left"><canvas></canvas></div>
+      <div class="page right" id="page-right"><canvas></canvas></div>
+    </div>
+  </div>
+
+  <button class="nav prev" id="prev-btn" aria-label="Previous">←</button>
+  <button class="nav next" id="next-btn" aria-label="Next">→</button>
+
+  <div class="footer-hint" id="footer-hint">Use ← → or swipe</div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const intro       = document.getElementById('intro');
+const dropZone    = document.getElementById('drop-zone');
+const fileInput   = document.getElementById('file-input');
+const viewer      = document.getElementById('viewer');
+const loading     = document.getElementById('loading');
+const pageLeftEl  = document.getElementById('page-left');
+const pageRightEl = document.getElementById('page-right');
+const pageLeftCanvas  = pageLeftEl.querySelector('canvas');
+const pageRightCanvas = pageRightEl.querySelector('canvas');
+const prevBtn     = document.getElementById('prev-btn');
+const nextBtn     = document.getElementById('next-btn');
+const curPageEl   = document.getElementById('cur-page');
+const totPageEl   = document.getElementById('tot-page');
+const closeBtn    = document.getElementById('close-btn');
+
+let pdfDoc = null;
+let totalPages = 0;
+let spreadIndex = 0;
+let pageAspect = 1;
+
+/* ─── Page cache ───
+   We keep rendered bitmaps for already-seen pages, plus prefetch neighbors,
+   so flipping forward/backward is instant. */
+let pageCache = new Map();     // pageNum -> ImageBitmap | HTMLCanvasElement
+let pendingRenders = new Map();// pageNum -> Promise (deduplicate)
+let currentBoxWidth = 0;       // width tied to current cache
+const CACHE_RADIUS = 4;        // how many pages ahead/behind to keep warm
+
+/* ─── Drop / file selection ─── */
+['dragenter','dragover'].forEach(evt =>
+  document.addEventListener(evt, e => {
+    e.preventDefault();
+    dropZone.classList.add('dragging');
+  })
+);
+['dragleave','drop'].forEach(evt =>
+  document.addEventListener(evt, e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragging');
+  })
+);
+document.addEventListener('drop', e => {
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file && file.type === 'application/pdf') loadPDF(file);
+});
+fileInput.addEventListener('change', e => {
+  const file = e.target.files && e.target.files[0];
+  if (file) loadPDF(file);
+});
+
+/* ─── Load PDF ─── */
+async function loadPDF(file) {
+  try {
+    loading.classList.add('active');
+    const buf = await file.arrayBuffer();
+    pdfDoc = await pdfjsLib.getDocument({ data: buf }).promise;
+    totalPages = pdfDoc.numPages;
+    totPageEl.textContent = totalPages;
+
+    const firstPage = await pdfDoc.getPage(1);
+    const vp = firstPage.getViewport({ scale: 1 });
+    pageAspect = vp.width / vp.height;
+
+    intro.classList.add('hidden');
+    viewer.classList.add('visible');
+    await new Promise(r => requestAnimationFrame(r));
+
+    spreadIndex = 0;
+    fitPages();
+    await showSpread();
+
+    loading.classList.remove('active');
+  } catch (err) {
+    loading.classList.remove('active');
+    alert('Could not open file: ' + (err && err.message ? err.message : err));
+    console.error(err);
+  }
+}
+
+/* ─── Layout sizing ─── */
+function fitPages() {
+  const stage = document.querySelector('.book-stage');
+  const availW = stage.clientWidth;
+  const availH = stage.clientHeight;
+  if (availW <= 0 || availH <= 0) return;
+
+  // Leave breathing room inside the stage so the book never touches the edges.
+  // Vertical headroom is slightly more generous so the book sits visually
+  // higher than centre, with comfortable space below.
+  const usableW = availW * 0.96;
+  const usableH = availH * 0.90;
+
+  // Two pages side by side
+  let w = usableW / 2;
+  let h = w / pageAspect;
+  if (h > usableH) {
+    h = usableH;
+    w = h * pageAspect;
+  }
+
+  // If the rendered cache was made for a very different width, invalidate.
+  if (Math.abs(w - currentBoxWidth) > 40) {
+    pageCache.clear();
+    pendingRenders.clear();
+    currentBoxWidth = w;
+  } else if (currentBoxWidth === 0) {
+    currentBoxWidth = w;
+  }
+
+  pageLeftEl.style.width  = w + 'px';
+  pageLeftEl.style.height = h + 'px';
+  pageRightEl.style.width  = w + 'px';
+  pageRightEl.style.height = h + 'px';
+}
+
+/* ─── Render one PDF page to an offscreen canvas, cache the result ─── */
+function renderPageToCache(pageNum) {
+  if (pageNum < 1 || pageNum > totalPages) return Promise.resolve(null);
+  if (pageCache.has(pageNum)) return Promise.resolve(pageCache.get(pageNum));
+  if (pendingRenders.has(pageNum)) return pendingRenders.get(pageNum);
+
+  const p = (async () => {
+    const page = await pdfDoc.getPage(pageNum);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2); // cap DPR for speed
+    const baseVp = page.getViewport({ scale: 1 });
+    const scale = (currentBoxWidth * dpr) / baseVp.width;
+    const viewport = page.getViewport({ scale });
+
+    const off = document.createElement('canvas');
+    off.width = Math.max(1, Math.floor(viewport.width));
+    off.height = Math.max(1, Math.floor(viewport.height));
+    const ctx = off.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    pageCache.set(pageNum, off);
+    pendingRenders.delete(pageNum);
+    pruneCache();
+    return off;
+  })();
+
+  pendingRenders.set(pageNum, p);
+  return p;
+}
+
+/* Keep cache bounded around the current spread */
+function pruneCache() {
+  const center = spreadIndex === 0 ? 1 : spreadIndex * 2;
+  const min = Math.max(1, center - CACHE_RADIUS * 2);
+  const max = Math.min(totalPages, center + CACHE_RADIUS * 2 + 1);
+  for (const k of pageCache.keys()) {
+    if (k < min || k > max) pageCache.delete(k);
+  }
+}
+
+/* Paint a cached page to one of the visible canvases */
+function paintToCanvas(srcCanvas, dstCanvas) {
+  if (!srcCanvas) {
+    dstCanvas.width = 1; dstCanvas.height = 1;
+    return;
+  }
+  dstCanvas.width = srcCanvas.width;
+  dstCanvas.height = srcCanvas.height;
+  const ctx = dstCanvas.getContext('2d');
+  ctx.drawImage(srcCanvas, 0, 0);
+}
+
+/* ─── Show current spread ─── */
+async function showSpread() {
+  let leftNum, rightNum;
+  if (spreadIndex === 0) {
+    leftNum = 0;
+    rightNum = 1;
+  } else {
+    leftNum = spreadIndex * 2;
+    rightNum = spreadIndex * 2 + 1;
+  }
+
+  pageLeftEl.classList.toggle('hidden', leftNum < 1 || leftNum > totalPages);
+  pageRightEl.classList.toggle('hidden', rightNum < 1 || rightNum > totalPages);
+
+  // Render (or get from cache) both pages of the current spread first
+  const [leftImg, rightImg] = await Promise.all([
+    renderPageToCache(leftNum),
+    renderPageToCache(rightNum),
+  ]);
+  paintToCanvas(leftImg, pageLeftCanvas);
+  paintToCanvas(rightImg, pageRightCanvas);
+
+  updateUI();
+  prefetchNeighbors();
+}
+
+/* Quietly render upcoming/previous spreads in the background */
+function prefetchNeighbors() {
+  const candidates = [];
+  for (let d = 1; d <= CACHE_RADIUS; d++) {
+    const fwd = spreadIndex + d;
+    candidates.push(fwd * 2, fwd * 2 + 1);
+    const back = spreadIndex - d;
+    if (back >= 0) {
+      if (back === 0) candidates.push(1);
+      else candidates.push(back * 2, back * 2 + 1);
+    }
+  }
+  candidates.forEach(n => { if (n >= 1 && n <= totalPages) renderPageToCache(n); });
+}
+
+function updateUI() {
+  let cur;
+  if (spreadIndex === 0) cur = 1;
+  else cur = Math.min(spreadIndex * 2 + 1, totalPages);
+  curPageEl.textContent = cur;
+
+  prevBtn.disabled = (spreadIndex === 0);
+  const currentRight = spreadIndex === 0 ? 1 : spreadIndex * 2 + 1;
+  nextBtn.disabled = (currentRight >= totalPages);
+}
+
+/* ─── Navigation ─── */
+async function goNext() {
+  if (nextBtn.disabled) return;
+  spreadIndex++;
+  await showSpread();
+}
+async function goPrev() {
+  if (prevBtn.disabled) return;
+  spreadIndex--;
+  await showSpread();
+}
+
+nextBtn.addEventListener('click', goNext);
+prevBtn.addEventListener('click', goPrev);
+
+document.addEventListener('keydown', e => {
+  if (!viewer.classList.contains('visible')) return;
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); goNext(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
+  else if (e.key === 'Escape') closeBook();
+});
+
+closeBtn.addEventListener('click', closeBook);
+
+function closeBook() {
+  viewer.classList.remove('visible');
+  setTimeout(() => {
+    intro.classList.remove('hidden');
+    pdfDoc = null;
+    spreadIndex = 0;
+    pageCache.clear();
+    pendingRenders.clear();
+    currentBoxWidth = 0;
+    fileInput.value = '';
+  }, 400);
+}
+
+/* ─── Touch swipe ─── */
+let touchStartX = null;
+viewer.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
+}, { passive: true });
+viewer.addEventListener('touchend', e => {
+  if (touchStartX === null) return;
+  const dx = (e.changedTouches[0].clientX - touchStartX);
+  touchStartX = null;
+  if (Math.abs(dx) < 50) return;
+  if (dx < 0) goNext(); else goPrev();
+}, { passive: true });
+
+/* ─── Resize ─── */
+let resizeTimer;
+window.addEventListener('resize', () => {
+  if (!pdfDoc) return;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(async () => {
+    fitPages();
+    await showSpread();
+  }, 150);
+});
+</script>
+</body>
+</html>
